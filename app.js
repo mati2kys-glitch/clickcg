@@ -2,6 +2,8 @@
    CLICK DESIGN Main JavaScript Core Logic (User Front-End Only)
    ========================================================================== */
 
+import { firebaseConfig, isFirebaseEnabled } from "./firebase-config.js";
+
 document.addEventListener('DOMContentLoaded', () => {
     
     // --- 1. Custom Cursor Logic (with LERP for smooth followers) ---
@@ -207,9 +209,10 @@ document.addEventListener('DOMContentLoaded', () => {
     revealElements.forEach(el => revealObserver.observe(el));
 
 
-    // --- 7. LocalStorage Portfolio Project & Hero Slides Seeding ---
-    const DB_KEY = 'click_design_projects';
-    const SLIDES_DB_KEY = 'click_design_hero_slides';
+    // --- 7. Static / Hybrid Database Loader (LocalStorage & Firebase Fallback) ---
+    let cachedProjects = [];
+    let cachedSlides = [];
+    let db = null;
     
     const SEED_SLIDES = [
         "assets/birds_eye_view.png",
@@ -265,39 +268,127 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     ];
 
-    function initDatabase() {
-        if (!localStorage.getItem(DB_KEY)) {
-            localStorage.setItem(DB_KEY, JSON.stringify(SEED_PROJECTS));
+    async function initFirebase() {
+        if (!isFirebaseEnabled) return;
+        try {
+            const { initializeApp } = await import("https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js");
+            const { getFirestore } = await import("https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js");
+            
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            console.log("Firebase Cloud DB connected successfully.");
+        } catch (e) {
+            console.error("Firebase SDK init failed:", e);
+        }
+    }
+
+    async function loadStaticDatabase() {
+        if (isFirebaseEnabled) {
+            try {
+                if (!db) await initFirebase();
+                const { collection, getDocs, doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js");
+                
+                // 1. Fetch Projects from Cloud
+                const querySnapshot = await getDocs(collection(db, "projects"));
+                const items = [];
+                querySnapshot.forEach((doc) => {
+                    items.push({ id: doc.id, ...doc.data() });
+                });
+                
+                // Seeding if cloud database is empty
+                if (items.length === 0) {
+                    console.log("Cloud Database is empty. Seeding initial projects...");
+                    const { setDoc } = await import("https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js");
+                    for (const p of SEED_PROJECTS) {
+                        const newDocRef = doc(db, "projects", String(p.id));
+                        await setDoc(newDocRef, {
+                            title: p.title,
+                            category: p.category,
+                            imgUrl: p.imgUrl,
+                            software: p.software,
+                            scope: p.scope,
+                            date: p.date,
+                            client: p.client,
+                            desc: p.desc
+                        });
+                        items.push(p);
+                    }
+                }
+                
+                cachedProjects = items;
+                cachedProjects.sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
+
+                // 2. Fetch Hero Slides from Cloud
+                const docRef = doc(db, "settings", "hero");
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    cachedSlides = docSnap.data().slides || SEED_SLIDES;
+                } else {
+                    const { setDoc } = await import("https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js");
+                    await setDoc(docRef, { slides: SEED_SLIDES });
+                    cachedSlides = SEED_SLIDES;
+                }
+            } catch (error) {
+                console.error("Firestore fetch error. Using local memory default:", error);
+                cachedProjects = SEED_PROJECTS;
+                cachedSlides = SEED_SLIDES;
+            }
         } else {
-            // Migration: Convert category 'cg' to 'interior' for existing stored database items
-            const projects = JSON.parse(localStorage.getItem(DB_KEY));
-            let migrated = false;
-            projects.forEach(p => {
-                if (p.category === 'cg') {
-                    p.category = 'interior';
-                    migrated = true;
+            // LocalStorage Fallback Mode
+            const DB_KEY = 'click_design_projects';
+            const SLIDES_DB_KEY = 'click_design_hero_slides';
+            
+            if (!localStorage.getItem(DB_KEY)) {
+                localStorage.setItem(DB_KEY, JSON.stringify(SEED_PROJECTS));
+            } else {
+                // Migration (cg to interior)
+                const projects = JSON.parse(localStorage.getItem(DB_KEY));
+                let migrated = false;
+                projects.forEach(p => {
+                    if (p.category === 'cg') {
+                        p.category = 'interior';
+                        migrated = true;
+                    }
+                });
+                if (migrated) {
+                    localStorage.setItem(DB_KEY, JSON.stringify(projects));
+                }
+            }
+
+            if (!localStorage.getItem(SLIDES_DB_KEY)) {
+                localStorage.setItem(SLIDES_DB_KEY, JSON.stringify(SEED_SLIDES));
+            }
+            
+            cachedProjects = JSON.parse(localStorage.getItem(DB_KEY));
+            cachedSlides = JSON.parse(localStorage.getItem(SLIDES_DB_KEY));
+        }
+    }
+
+    function setupRealtimeListener() {
+        if (!isFirebaseEnabled || !db) return;
+        
+        import("https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js").then(({ collection, onSnapshot }) => {
+            onSnapshot(collection(db, "projects"), (querySnapshot) => {
+                const items = [];
+                querySnapshot.forEach((doc) => {
+                    items.push({ id: doc.id, ...doc.data() });
+                });
+                if (items.length > 0) {
+                    cachedProjects = items;
+                    cachedProjects.sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
+                    renderPortfolio();
                 }
             });
-            if (migrated) {
-                localStorage.setItem(DB_KEY, JSON.stringify(projects));
-            }
-        }
+        }).catch(err => console.error("Snapshot listener register error:", err));
     }
 
-    function initSlidesDatabase() {
-        if (!localStorage.getItem(SLIDES_DB_KEY)) {
-            localStorage.setItem(SLIDES_DB_KEY, JSON.stringify(SEED_SLIDES));
-        }
-    }
-    
     function getProjectsFromDB() {
-        initDatabase();
-        return JSON.parse(localStorage.getItem(DB_KEY));
+        return cachedProjects;
     }
 
+    // Hero Slides getter
     function getSlidesFromDB() {
-        initSlidesDatabase();
-        return JSON.parse(localStorage.getItem(SLIDES_DB_KEY));
+        return cachedSlides;
     }
 
 
@@ -316,17 +407,6 @@ document.addEventListener('DOMContentLoaded', () => {
             renderPortfolio();
         });
     });
-
-    // Translate category keys for human-readable labels
-    function getCategoryName(categoryKey) {
-        switch (categoryKey) {
-            case 'birds-eye': return '조감도';
-            case 'perspective': return '투시도';
-            case 'interior': return '인테리어';
-            case 'simulation': return '시뮬레이션';
-            default: return '기타';
-        }
-    }
 
     // Dynamic Portfolio Render Loop
     function renderPortfolio() {
@@ -367,8 +447,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const detailModal = document.getElementById('project-detail-modal');
     const modalCloseBtn = document.getElementById('modal-close-btn');
     const modalCloseBackdrop = document.getElementById('modal-close-backdrop');
-    
-    // Select elements in detail lightbox
     const mImg = document.getElementById('modal-project-img');
     
     function openDetailModal(project) {
@@ -456,7 +534,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     
-    // --- 12. Initialize Core Render Engine ---
-    renderPortfolio();
-    renderHeroSlider();
+    // --- 12. Initialize Core Render Engine (Async Load) ---
+    loadStaticDatabase().then(() => {
+        renderPortfolio();
+        renderHeroSlider();
+        setupRealtimeListener();
+    });
 });
