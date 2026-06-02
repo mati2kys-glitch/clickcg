@@ -101,8 +101,13 @@ document.addEventListener('DOMContentLoaded', () => {
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const tokenVal = tokenInput.value.trim();
-            const repoVal = repoInput.value.trim();
+            let repoVal = repoInput.value.trim();
             const branchVal = branchInput.value.trim() || 'main';
+
+            // Automatically parse full GitHub URL if pasted
+            if (repoVal.includes('github.com/')) {
+                repoVal = repoVal.split('github.com/')[1].split('?')[0].replace(/\.git$/, '');
+            }
 
             if (loginErrorMsg) {
                 loginErrorMsg.textContent = 'GitHub API 연결 시도 중...';

@@ -2,8 +2,6 @@
    CLICK DESIGN Main JavaScript Core Logic (User Front-End Only)
    ========================================================================== */
 
-import { firebaseConfig, isFirebaseEnabled } from "./firebase-config.js";
-
 document.addEventListener('DOMContentLoaded', () => {
     
     // --- 1. Custom Cursor Logic (with LERP for smooth followers) ---
@@ -209,10 +207,9 @@ document.addEventListener('DOMContentLoaded', () => {
     revealElements.forEach(el => revealObserver.observe(el));
 
 
-    // --- 7. Static / Hybrid Database Loader (LocalStorage & Firebase Fallback) ---
+    // --- 7. Static JSON Database Loader (projects.json) ---
     let cachedProjects = [];
     let cachedSlides = [];
-    let db = null;
     
     const SEED_SLIDES = [
         "assets/birds_eye_view.png",
@@ -268,125 +265,27 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     ];
 
-    async function initFirebase() {
-        if (!isFirebaseEnabled) return;
-        try {
-            const { initializeApp } = await import("https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js");
-            const { getFirestore } = await import("https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js");
-            
-            const app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            console.log("Firebase Cloud DB connected successfully.");
-        } catch (e) {
-            console.error("Firebase SDK init failed:", e);
-        }
-    }
-
     async function loadStaticDatabase() {
-        if (isFirebaseEnabled) {
-            try {
-                if (!db) await initFirebase();
-                const { collection, getDocs, doc, getDoc } = await import("https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js");
-                
-                // 1. Fetch Projects from Cloud
-                const querySnapshot = await getDocs(collection(db, "projects"));
-                const items = [];
-                querySnapshot.forEach((doc) => {
-                    items.push({ id: doc.id, ...doc.data() });
-                });
-                
-                // Seeding if cloud database is empty
-                if (items.length === 0) {
-                    console.log("Cloud Database is empty. Seeding initial projects...");
-                    const { setDoc } = await import("https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js");
-                    for (const p of SEED_PROJECTS) {
-                        const newDocRef = doc(db, "projects", String(p.id));
-                        await setDoc(newDocRef, {
-                            title: p.title,
-                            category: p.category,
-                            imgUrl: p.imgUrl,
-                            software: p.software,
-                            scope: p.scope,
-                            date: p.date,
-                            client: p.client,
-                            desc: p.desc
-                        });
-                        items.push(p);
-                    }
-                }
-                
-                cachedProjects = items;
-                cachedProjects.sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
-
-                // 2. Fetch Hero Slides from Cloud
-                const docRef = doc(db, "settings", "hero");
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) {
-                    cachedSlides = docSnap.data().slides || SEED_SLIDES;
-                } else {
-                    const { setDoc } = await import("https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js");
-                    await setDoc(docRef, { slides: SEED_SLIDES });
-                    cachedSlides = SEED_SLIDES;
-                }
-            } catch (error) {
-                console.error("Firestore fetch error. Using local memory default:", error);
-                cachedProjects = SEED_PROJECTS;
-                cachedSlides = SEED_SLIDES;
+        try {
+            const response = await fetch('projects.json');
+            if (!response.ok) {
+                throw new Error('데이터 파일을 불러오는 데 실패했습니다.');
             }
-        } else {
-            // LocalStorage Fallback Mode
-            const DB_KEY = 'click_design_projects';
-            const SLIDES_DB_KEY = 'click_design_hero_slides';
-            
-            if (!localStorage.getItem(DB_KEY)) {
-                localStorage.setItem(DB_KEY, JSON.stringify(SEED_PROJECTS));
-            } else {
-                // Migration (cg to interior)
-                const projects = JSON.parse(localStorage.getItem(DB_KEY));
-                let migrated = false;
-                projects.forEach(p => {
-                    if (p.category === 'cg') {
-                        p.category = 'interior';
-                        migrated = true;
-                    }
-                });
-                if (migrated) {
-                    localStorage.setItem(DB_KEY, JSON.stringify(projects));
-                }
-            }
-
-            if (!localStorage.getItem(SLIDES_DB_KEY)) {
-                localStorage.setItem(SLIDES_DB_KEY, JSON.stringify(SEED_SLIDES));
-            }
-            
-            cachedProjects = JSON.parse(localStorage.getItem(DB_KEY));
-            cachedSlides = JSON.parse(localStorage.getItem(SLIDES_DB_KEY));
+            const data = await response.json();
+            cachedProjects = data.projects || [];
+            cachedSlides = data.slides || [];
+            cachedProjects.sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
+        } catch (error) {
+            console.warn('projects.json 로드 실패. 기본 시드 데이터를 사용합니다:', error);
+            cachedProjects = SEED_PROJECTS;
+            cachedSlides = SEED_SLIDES;
         }
-    }
-
-    function setupRealtimeListener() {
-        if (!isFirebaseEnabled || !db) return;
-        
-        import("https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js").then(({ collection, onSnapshot }) => {
-            onSnapshot(collection(db, "projects"), (querySnapshot) => {
-                const items = [];
-                querySnapshot.forEach((doc) => {
-                    items.push({ id: doc.id, ...doc.data() });
-                });
-                if (items.length > 0) {
-                    cachedProjects = items;
-                    cachedProjects.sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
-                    renderPortfolio();
-                }
-            });
-        }).catch(err => console.error("Snapshot listener register error:", err));
     }
 
     function getProjectsFromDB() {
         return cachedProjects;
     }
 
-    // Hero Slides getter
     function getSlidesFromDB() {
         return cachedSlides;
     }
@@ -424,7 +323,6 @@ document.addEventListener('DOMContentLoaded', () => {
             item.className = 'portfolio-item';
             item.setAttribute('data-category', project.category);
             
-            // Build card inner structures (Minimalist style: image only)
             item.innerHTML = `
                 <div class="portfolio-card">
                     <div class="card-img-wrapper">
@@ -433,7 +331,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
             `;
             
-            // Add Modal Detail click event listener to Card
             item.addEventListener('click', () => {
                 openDetailModal(project);
             });
@@ -484,7 +381,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 feedbackMessage.style.color = 'var(--accent)';
             }
             
-            // Simulate API request delay
             setTimeout(() => {
                 contactForm.reset();
                 if (feedbackMessage) {
@@ -493,7 +389,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     feedbackMessage.style.color = 'hsl(140, 70%, 50%)';
                 }
                 
-                // Clear success message after 5 seconds
                 setTimeout(() => {
                     if (feedbackMessage) feedbackMessage.textContent = '';
                 }, 5000);
@@ -523,7 +418,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Mouse scroll down indicator click event helper
     if (scrollIndicator) {
         scrollIndicator.addEventListener('click', () => {
             const portfolioSec = document.getElementById('portfolio');
@@ -538,6 +432,5 @@ document.addEventListener('DOMContentLoaded', () => {
     loadStaticDatabase().then(() => {
         renderPortfolio();
         renderHeroSlider();
-        setupRealtimeListener();
     });
 });
