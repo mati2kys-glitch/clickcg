@@ -1,9 +1,6 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js";
-
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
+/* ==========================================================================
+   CLICK DESIGN Main JavaScript Core Logic (User Front-End Only)
+   ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', () => {
     
@@ -133,6 +130,8 @@ document.addEventListener('DOMContentLoaded', () => {
         sliderWrapper.innerHTML = '';
         dotsWrapper.innerHTML = '';
         
+        const heroSlides = getSlidesFromDB();
+        
         heroSlides.forEach((slideUrl, index) => {
             // Create slide div
             const slideDiv = document.createElement('div');
@@ -208,7 +207,10 @@ document.addEventListener('DOMContentLoaded', () => {
     revealElements.forEach(el => revealObserver.observe(el));
 
 
-    // --- 7. Cloud Database (Firebase) Configuration and Fallback Seeding ---
+    // --- 7. LocalStorage Portfolio Project & Hero Slides Seeding ---
+    const DB_KEY = 'click_design_projects';
+    const SLIDES_DB_KEY = 'click_design_hero_slides';
+    
     const SEED_SLIDES = [
         "assets/birds_eye_view.png",
         "assets/perspective_view.png",
@@ -263,42 +265,40 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     ];
 
-    let allProjects = [];
-    let heroSlides = [];
-
-    // Real-time listener for projects
-    const qProjects = query(collection(db, "projects"), orderBy("id", "asc"));
-    onSnapshot(qProjects, (snapshot) => {
-        allProjects = [];
-        snapshot.forEach((doc) => {
-            allProjects.push({ docId: doc.id, ...doc.data() });
-        });
-        
-        if (allProjects.length === 0) {
-            allProjects = SEED_PROJECTS;
-        }
-        
-        renderPortfolio();
-    });
-
-    // Real-time listener for slides
-    onSnapshot(collection(db, "hero_slides"), (snapshot) => {
-        let loadedSlides = [];
-        snapshot.forEach((doc) => {
-            const data = doc.data();
-            if (data && data.slides) {
-                loadedSlides = data.slides;
-            }
-        });
-        
-        if (loadedSlides.length > 0) {
-            heroSlides = loadedSlides;
+    function initDatabase() {
+        if (!localStorage.getItem(DB_KEY)) {
+            localStorage.setItem(DB_KEY, JSON.stringify(SEED_PROJECTS));
         } else {
-            heroSlides = SEED_SLIDES;
+            // Migration: Convert category 'cg' to 'interior' for existing stored database items
+            const projects = JSON.parse(localStorage.getItem(DB_KEY));
+            let migrated = false;
+            projects.forEach(p => {
+                if (p.category === 'cg') {
+                    p.category = 'interior';
+                    migrated = true;
+                }
+            });
+            if (migrated) {
+                localStorage.setItem(DB_KEY, JSON.stringify(projects));
+            }
         }
-        
-        renderHeroSlider();
-    });
+    }
+
+    function initSlidesDatabase() {
+        if (!localStorage.getItem(SLIDES_DB_KEY)) {
+            localStorage.setItem(SLIDES_DB_KEY, JSON.stringify(SEED_SLIDES));
+        }
+    }
+    
+    function getProjectsFromDB() {
+        initDatabase();
+        return JSON.parse(localStorage.getItem(DB_KEY));
+    }
+
+    function getSlidesFromDB() {
+        initSlidesDatabase();
+        return JSON.parse(localStorage.getItem(SLIDES_DB_KEY));
+    }
 
 
     // --- 8. Portfolio Rendering & Filtering ---
@@ -333,6 +333,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!portfolioGrid) return;
         
         portfolioGrid.innerHTML = '';
+        const allProjects = getProjectsFromDB();
         
         // Filter projects
         const filteredProjects = allProjects.filter(p => currentFilter === 'all' || p.category === currentFilter);
@@ -456,5 +457,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     
     // --- 12. Initialize Core Render Engine ---
-    // Rendered automatically via Firebase onSnapshot listeners
+    renderPortfolio();
+    renderHeroSlider();
 });

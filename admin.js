@@ -1,17 +1,10 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, doc, collection, onSnapshot, query, orderBy, setDoc, deleteDoc, addDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-import { getStorage, ref, uploadString, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
-import { firebaseConfig } from "./firebase-config.js";
-
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
-const auth = getAuth(firebaseApp);
-const storage = getStorage(firebaseApp);
+/* ==========================================================================
+   CLICK DESIGN Admin Dashboard Controller Logic (admin.js)
+   ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', () => {
 
-    // --- 1. Authentication and Session State ---
+    // --- 1. Password Verification and Session State ---
     const loginOverlay = document.getElementById('admin-login-overlay');
     const dashboardView = document.getElementById('admin-dashboard-view');
     const loginForm = document.getElementById('admin-login-form');
@@ -19,37 +12,58 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginErrorMsg = document.getElementById('login-error-msg');
     const logoutBtn = document.getElementById('admin-logout-btn');
 
-    let projectsUnsubscribe = null;
-    let slidesUnsubscribe = null;
+    const SESSION_KEY = 'click_design_admin_logged_in';
+    const PWD_HASH_KEY = 'click_design_admin_password_hash';
+    const DEFAULT_PWD_PLAIN = 'admin1234';
 
-    onAuthStateChanged(auth, (user) => {
-        if (user) {
+    // Asynchronous SHA-256 hash helper function
+    async function sha256(message) {
+        const msgBuffer = new TextEncoder().encode(message);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        return hashHex;
+    }
+
+    async function getAdminPasswordHash() {
+        let storedHash = localStorage.getItem(PWD_HASH_KEY);
+        if (!storedHash) {
+            storedHash = await sha256(DEFAULT_PWD_PLAIN);
+            localStorage.setItem(PWD_HASH_KEY, storedHash);
+        }
+        return storedHash;
+    }
+
+    function checkLoginSession() {
+        if (sessionStorage.getItem(SESSION_KEY) === 'true') {
             if (loginOverlay) loginOverlay.style.display = 'none';
             if (dashboardView) dashboardView.style.display = 'block';
             initDashboard();
         } else {
             if (loginOverlay) loginOverlay.style.display = 'flex';
             if (dashboardView) dashboardView.style.display = 'none';
-            
-            // Clean up listeners on logout
-            if (projectsUnsubscribe) projectsUnsubscribe();
-            if (slidesUnsubscribe) slidesUnsubscribe();
         }
-    });
+    }
 
     if (loginForm) {
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const adminEmail = "admin@clickcg.com";
             const inputPass = passwordInput.value;
+            const hashedInput = await sha256(inputPass);
+            const currentHash = await getAdminPasswordHash();
             
-            try {
-                await signInWithEmailAndPassword(auth, adminEmail, inputPass);
+            if (hashedInput === currentHash) {
+                sessionStorage.setItem(SESSION_KEY, 'true');
                 if (loginErrorMsg) loginErrorMsg.textContent = '';
-            } catch (error) {
-                console.error("Login failed:", error);
+                
+                // Transition views
+                if (loginOverlay) loginOverlay.style.display = 'none';
+                if (dashboardView) dashboardView.style.display = 'block';
+                
+                initDashboard();
+            } else {
                 if (loginErrorMsg) {
-                    loginErrorMsg.textContent = '비밀번호가 올바르지 않거나 인증에 실패했습니다.';
+                    loginErrorMsg.textContent = '비밀번호가 올바르지 않습니다. 다시 입력해 주세요.';
                 }
                 passwordInput.value = '';
                 passwordInput.focus();
@@ -58,14 +72,34 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (logoutBtn) {
-        logoutBtn.addEventListener('click', async () => {
-            await signOut(auth);
+        logoutBtn.addEventListener('click', () => {
+            sessionStorage.removeItem(SESSION_KEY);
             window.location.reload();
         });
     }
 
+    // --- 1.1. Reset All (Data & Password) ---
+    const resetAllBtn = document.getElementById('admin-reset-all-btn');
+    if (resetAllBtn) {
+        resetAllBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const confirmed = confirm('관리자 비밀번호와 모든 포트폴리오 데이터를 초기 상태로 리셋하시겠습니까?\n이 작업은 되돌릴 수 없습니다.');
+            if (confirmed) {
+                localStorage.removeItem(PWD_HASH_KEY);
+                localStorage.removeItem(DB_KEY);
+                localStorage.removeItem(SLIDES_DB_KEY);
+                sessionStorage.removeItem(SESSION_KEY);
+                alert('초기화가 완료되었습니다. 기본 비밀번호는 "admin1234"입니다.');
+                window.location.reload();
+            }
+        });
+    }
 
-    // --- 2. Cloud Database Fallback Seeding ---
+
+    // --- 2. LocalStorage Database Synchronization ---
+    const DB_KEY = 'click_design_projects';
+    const SLIDES_DB_KEY = 'click_design_hero_slides';
+
     const SEED_SLIDES = [
         "assets/birds_eye_view.png",
         "assets/perspective_view.png",
@@ -120,17 +154,39 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     ];
 
-    async function seedFirestoreProjects() {
-        console.log("Seeding Firestore with default projects...");
-        try {
-            for (const proj of SEED_PROJECTS) {
-                await addDoc(collection(db, "projects"), proj);
+    function initDatabase() {
+        if (!localStorage.getItem(DB_KEY)) {
+            localStorage.setItem(DB_KEY, JSON.stringify(SEED_PROJECTS));
+        } else {
+            // Migration: Convert category 'cg' to 'interior' for existing stored database items
+            const projects = JSON.parse(localStorage.getItem(DB_KEY));
+            let migrated = false;
+            projects.forEach(p => {
+                if (p.category === 'cg') {
+                    p.category = 'interior';
+                    migrated = true;
+                }
+            });
+            if (migrated) {
+                localStorage.setItem(DB_KEY, JSON.stringify(projects));
             }
-            const slidesRef = doc(db, "hero_slides", "config");
-            await setDoc(slidesRef, { slides: SEED_SLIDES });
-        } catch (e) {
-            console.error("Error seeding Firestore:", e);
         }
+    }
+
+    function initSlidesDatabase() {
+        if (!localStorage.getItem(SLIDES_DB_KEY)) {
+            localStorage.setItem(SLIDES_DB_KEY, JSON.stringify(SEED_SLIDES));
+        }
+    }
+    
+    function getProjectsFromDB() {
+        initDatabase();
+        return JSON.parse(localStorage.getItem(DB_KEY));
+    }
+
+    function getSlidesFromDB() {
+        initSlidesDatabase();
+        return JSON.parse(localStorage.getItem(SLIDES_DB_KEY));
     }
 
     // Compress image helper using HTML5 Canvas to prevent LocalStorage quota limits (max 1200px, 0.7 quality)
@@ -172,13 +228,21 @@ document.addEventListener('DOMContentLoaded', () => {
         reader.readAsDataURL(file);
     }
 
-    async function saveSlidesToDB(slidesList) {
+    function saveProjectsToDB(projectsList) {
         try {
-            const slidesRef = doc(db, "hero_slides", "config");
-            await setDoc(slidesRef, { slides: slidesList });
+            localStorage.setItem(DB_KEY, JSON.stringify(projectsList));
         } catch (e) {
-            console.error('Firebase save slides failed:', e);
-            alert('슬라이드 설정을 파이어베이스에 저장하는 중 오류가 발생했습니다.');
+            console.error('LocalStorage write failed:', e);
+            alert('저장 공간(LocalStorage)의 용량이 부족하여 저장을 완료하지 못했습니다. 더 적은 수의 이미지나 저용량 이미지 파일을 사용해 주세요.');
+        }
+    }
+
+    function saveSlidesToDB(slidesList) {
+        try {
+            localStorage.setItem(SLIDES_DB_KEY, JSON.stringify(slidesList));
+        } catch (e) {
+            console.error('LocalStorage write failed:', e);
+            alert('저장 공간(LocalStorage)의 용량이 부족하여 슬라이더 설정을 저장하지 못했습니다. 더 작거나 해상도가 낮은 이미지를 업로드해 주세요.');
         }
     }
 
@@ -196,44 +260,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const summaryCountText = document.getElementById('project-count-summary');
 
     let tempSlides = []; // Local memory cache for slide edits
-    let allProjects = [];
 
     function initDashboard() {
-        if (projectsUnsubscribe) projectsUnsubscribe();
-        if (slidesUnsubscribe) slidesUnsubscribe();
+        renderDashboardTable();
+        calculateDashboardMetrics();
+        initSlidesDashboard();
+    }
 
-        // Listen to projects
-        const qProjects = query(collection(db, "projects"), orderBy("id", "asc"));
-        projectsUnsubscribe = onSnapshot(qProjects, (snapshot) => {
-            allProjects = [];
-            snapshot.forEach((doc) => {
-                allProjects.push({ docId: doc.id, ...doc.data() });
-            });
-            
-            if (allProjects.length === 0) {
-                seedFirestoreProjects();
-            } else {
-                renderDashboardTable();
-                calculateDashboardMetrics();
-            }
-        }, (error) => {
-            console.error("Firestore projects listener failed:", error);
-        });
-
-        // Listen to slides
-        slidesUnsubscribe = onSnapshot(collection(db, "hero_slides"), (snapshot) => {
-            let loadedSlides = [];
-            snapshot.forEach((doc) => {
-                const data = doc.data();
-                if (data && data.slides) {
-                    loadedSlides = data.slides;
-                }
-            });
-            tempSlides = loadedSlides.length > 0 ? loadedSlides : [...SEED_SLIDES];
-            renderSlidesManager();
-        }, (error) => {
-            console.error("Firestore slides listener failed:", error);
-        });
+    function initSlidesDashboard() {
+        tempSlides = [...getSlidesFromDB()];
+        renderSlidesManager();
     }
 
     // Translate category key for CSS class
@@ -253,15 +289,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function calculateDashboardMetrics() {
+        const projects = getProjectsFromDB();
+        
         const counts = {
-            total: allProjects.length,
+            total: projects.length,
             'birds-eye': 0,
             'perspective': 0,
             'interior': 0,
             'simulation': 0
         };
 
-        allProjects.forEach(p => {
+        projects.forEach(p => {
             if (counts[p.category] !== undefined) {
                 counts[p.category]++;
             }
@@ -280,7 +318,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!tableBody) return;
         tableBody.innerHTML = '';
         
-        if (allProjects.length === 0) {
+        const projects = getProjectsFromDB();
+        
+        if (projects.length === 0) {
             tableBody.innerHTML = `
                 <tr>
                     <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 40px 0;">
@@ -291,7 +331,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        allProjects.forEach(project => {
+        projects.forEach(project => {
             const tr = document.createElement('tr');
             
             tr.innerHTML = `
@@ -355,7 +395,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     let uploadedImageBase64 = ''; // Cache file reader URL
 
-    function openFormModal(docId = null) {
+    function openFormModal(id = null) {
         if (!formModal) return;
         
         // Reset file values
@@ -368,13 +408,14 @@ document.addEventListener('DOMContentLoaded', () => {
         
         if (projectForm) projectForm.reset();
         
-        if (docId) {
+        if (id) {
             // Edit Mode
             formModalTitle.textContent = '프로젝트 정보 수정';
-            const project = allProjects.find(p => p.docId === docId);
+            const projects = getProjectsFromDB();
+            const project = projects.find(p => p.id === id);
             
             if (project) {
-                fId.value = project.docId;
+                fId.value = project.id;
                 fTitle.value = project.title;
                 fCategory.value = project.category;
                 fDate.value = project.date;
@@ -452,54 +493,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Submit Project Form (Create / Update database sync)
     if (projectForm) {
-        projectForm.addEventListener('submit', async (e) => {
+        projectForm.addEventListener('submit', (e) => {
             e.preventDefault();
             
             const titleVal = fTitle.value.trim();
             const categoryVal = fCategory.value;
             const dateVal = fDate.value.trim();
             
-            const saveBtn = document.getElementById('save-project-btn');
-            const originalBtnText = saveBtn ? saveBtn.textContent : '저장하기';
-            if (saveBtn) {
-                saveBtn.disabled = true;
-                saveBtn.textContent = '업로드 및 저장 중...';
+            // Image resolve
+            let finalImgUrl = fImgUrl.value.trim();
+            if (uploadedImageBase64) {
+                finalImgUrl = uploadedImageBase64;
             }
-
-            try {
-                // Image resolve
-                let finalImgUrl = fImgUrl.value.trim();
-                if (uploadedImageBase64) {
-                    const storageRef = ref(storage, `portfolio-images/${Date.now()}_project.jpg`);
-                    const uploadSnap = await uploadString(storageRef, uploadedImageBase64, 'data_url');
-                    finalImgUrl = await getDownloadURL(uploadSnap.ref);
-                }
-                
-                if (!finalImgUrl) {
-                    alert('이미지 경로를 지정하거나 이미지 파일을 업로드해 주세요.');
-                    if (saveBtn) {
-                        saveBtn.disabled = false;
-                        saveBtn.textContent = originalBtnText;
-                    }
-                    return;
-                }
-                
-                const docIdVal = fId.value;
-                
-                if (docIdVal) {
-                    // Update
-                    const docRef = doc(db, "projects", docIdVal);
-                    await updateDoc(docRef, {
-                        title: titleVal,
-                        category: categoryVal,
-                        imgUrl: finalImgUrl,
-                        date: dateVal
-                    });
-                } else {
-                    // Create
-                    const maxId = allProjects.length > 0 ? Math.max(...allProjects.map(p => p.id || 0)) : 0;
-                    await addDoc(collection(db, "projects"), {
-                        id: maxId + 1,
+            
+            if (!finalImgUrl) {
+                alert('이미지 경로를 지정하거나 이미지 파일을 업로드해 주세요.');
+                return;
+            }
+            
+            const projects = getProjectsFromDB();
+            const editId = fId.value ? parseInt(fId.value) : null;
+            
+            if (editId) {
+                // Update
+                const index = projects.findIndex(p => p.id === editId);
+                if (index !== -1) {
+                    projects[index] = {
+                        id: editId,
                         title: titleVal,
                         category: categoryVal,
                         imgUrl: finalImgUrl,
@@ -508,20 +528,44 @@ document.addEventListener('DOMContentLoaded', () => {
                         date: dateVal,
                         client: '',
                         desc: ''
-                    });
+                    };
                 }
-                
-                closeFormModal();
-            } catch (error) {
-                console.error("Save project failed:", error);
-                alert("프로젝트 저장에 실패했습니다: " + error.message);
-            } finally {
-                if (saveBtn) {
-                    saveBtn.disabled = false;
-                    saveBtn.textContent = originalBtnText;
-                }
+            } else {
+                // Create
+                const maxId = projects.length > 0 ? Math.max(...projects.map(p => p.id)) : 0;
+                const newProject = {
+                    id: maxId + 1,
+                    title: titleVal,
+                    category: categoryVal,
+                    imgUrl: finalImgUrl,
+                    software: '',
+                    scope: '',
+                    date: dateVal,
+                    client: '',
+                    desc: ''
+                };
+                projects.push(newProject);
             }
+            
+            saveProjectsToDB(projects);
+            closeFormModal();
+            initDashboard();
         });
+    }
+
+    // Delete project with confirm warning box
+    function deleteProject(id) {
+        const projects = getProjectsFromDB();
+        const project = projects.find(p => p.id === id);
+        
+        if (project) {
+            const confirmed = confirm(`"${project.title}" 프로젝트를 정말로 삭제하시겠습니까?`);
+            if (confirmed) {
+                const filtered = projects.filter(p => p.id !== id);
+                saveProjectsToDB(filtered);
+                initDashboard();
+            }
+        }
     }
 
 
@@ -555,7 +599,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <img class="slide-admin-thumb" src="${slideUrl}" alt="슬라이드 미리보기">
                 </div>
                 <div class="slide-admin-inputs">
-                    <input type="text" class="slide-url-input" value="${slideUrl.startsWith('data:image') || slideUrl.startsWith('http') ? '클라우드 이미지 URL' : slideUrl}" placeholder="이미지 주소 (예: assets/birds_eye_view.png)" ${slideUrl.startsWith('data:image') || slideUrl.startsWith('http') ? 'disabled' : ''}>
+                    <input type="text" class="slide-url-input" value="${slideUrl.startsWith('data:image') ? 'Base64 이미지 데이터' : slideUrl}" placeholder="이미지 주소 (예: assets/birds_eye_view.png)" ${slideUrl.startsWith('data:image') ? 'disabled' : ''}>
                     
                     <div class="slide-file-group">
                         <label class="slide-file-label" for="slide-file-${index}">
@@ -594,22 +638,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 fileInput.addEventListener('change', (e) => {
                     const file = e.target.files[0];
                     if (file) {
-                        compressAndLoadImage(file, async (compressedBase64) => {
-                            try {
-                                const storageRef = ref(storage, `hero-slides/${Date.now()}_slide.jpg`);
-                                const uploadSnap = await uploadString(storageRef, compressedBase64, 'data_url');
-                                const downloadUrl = await getDownloadURL(uploadSnap.ref);
-                                
-                                tempSlides[index] = downloadUrl;
-                                const thumbImg = card.querySelector('.slide-admin-thumb');
-                                if (thumbImg) thumbImg.src = tempSlides[index];
-                                if (urlInput) {
-                                    urlInput.value = '클라우드 이미지 URL';
-                                    urlInput.disabled = true;
-                                }
-                            } catch (err) {
-                                console.error("Slide upload failed:", err);
-                                alert("슬라이드 이미지 업로드에 실패했습니다.");
+                        compressAndLoadImage(file, (compressedBase64) => {
+                            tempSlides[index] = compressedBase64;
+                            const thumbImg = card.querySelector('.slide-admin-thumb');
+                            if (thumbImg) thumbImg.src = tempSlides[index];
+                            if (urlInput) {
+                                urlInput.value = 'Base64 이미지 데이터';
+                                urlInput.disabled = true;
                             }
                         });
                     }
@@ -628,8 +663,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (btnSaveSlides) {
-        btnSaveSlides.addEventListener('click', async () => {
-            await saveSlidesToDB(tempSlides);
+        btnSaveSlides.addEventListener('click', () => {
+            saveSlidesToDB(tempSlides);
             alert('슬라이드 설정이 성공적으로 저장되었습니다. 메인 웹사이트 슬라이더에 동기화되었습니다.');
             window.location.reload();
         });
@@ -682,10 +717,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 pFeedback.style.color = 'var(--accent)';
             }
             
-            const user = auth.currentUser;
-            if (!user) {
+            const currentHash = await getAdminPasswordHash();
+            const inputCurrentHash = await sha256(currentVal);
+            
+            if (inputCurrentHash !== currentHash) {
                 if (pFeedback) {
-                    pFeedback.textContent = '로그인이 만료되었습니다. 다시 로그인 해 주세요.';
+                    pFeedback.textContent = '현재 비밀번호가 일치하지 않습니다.';
                     pFeedback.style.color = 'hsl(0, 80%, 60%)';
                 }
                 return;
@@ -707,35 +744,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             
-            try {
-                // Re-authenticate before updating password to avoid session timeout errors
-                const credential = EmailAuthProvider.credential(user.email, currentVal);
-                await reauthenticateWithCredential(user, credential);
-                
-                // Update password in Auth DB
-                await updatePassword(user, newVal);
-                
-                if (pFeedback) {
-                    pFeedback.textContent = '비밀번호가 성공적으로 변경되었습니다. 다시 로그인 해 주세요.';
-                    pFeedback.style.color = 'hsl(140, 70%, 50%)';
-                }
-                
-                setTimeout(async () => {
-                    closePasswordModal();
-                    await signOut(auth);
-                    window.location.reload();
-                }, 1500);
-            } catch (err) {
-                console.error("Password update failed:", err);
-                if (pFeedback) {
-                    if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-                        pFeedback.textContent = '현재 비밀번호가 올바르지 않습니다.';
-                    } else {
-                        pFeedback.textContent = '비밀번호 변경에 실패했습니다: ' + err.message;
-                    }
-                    pFeedback.style.color = 'hsl(0, 80%, 60%)';
-                }
+            // Hash and Save
+            const newHash = await sha256(newVal);
+            localStorage.setItem(PWD_HASH_KEY, newHash);
+            
+            if (pFeedback) {
+                pFeedback.textContent = '비밀번호가 성공적으로 변경되었습니다. 다시 로그인 해 주세요.';
+                pFeedback.style.color = 'hsl(140, 70%, 50%)';
             }
+            
+            setTimeout(() => {
+                closePasswordModal();
+                // Logout and force login state refresh
+                sessionStorage.removeItem(SESSION_KEY);
+                window.location.reload();
+            }, 1500);
         });
     }
+
+
+    // --- 6. Bootstrapper ---
+    checkLoginSession();
 });
