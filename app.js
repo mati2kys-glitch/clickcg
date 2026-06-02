@@ -265,6 +265,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     ];
 
+    // --- 7-1. GitHub Repository 설정 (로컬 환경 테스트 시 깃허브 실시간 동기화 지원) ---
+    const GITHUB_CONFIG = {
+        owner: "mati2kys-glitch",  // 본인의 깃허브 ID
+        repo: "clickcg"            // 본인의 깃허브 저장소명
+    };
+
     async function loadStaticDatabase() {
         let githubUser = "";
         let githubRepo = "";
@@ -282,12 +288,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 // 경로 세그먼트가 비어있다면, 깃허브 User Page 레포(예: username.github.io)로 설정
                 githubRepo = `${githubUser}.github.io`;
             }
+        } else {
+            // 로컬 테스트 환경(file:// 등)일 경우, GITHUB_CONFIG에 정의된 원격 저장소 데이터를 끌어옴
+            githubUser = GITHUB_CONFIG.owner;
+            githubRepo = GITHUB_CONFIG.repo;
         }
         
-        // 2. GitHub Pages 환경일 때 API를 이용해 assets/ 폴더 목록 조회 및 파싱
+        // 2. GitHub Pages 환경 또는 지정된 레포가 있을 때 API를 이용해 assets/ 폴더 목록 조회 및 파싱
         if (githubUser && githubRepo) {
             try {
-                const apiURL = `https://api.github.com/repos/${githubUser}/${githubRepo}/contents/assets`;
+                // 캐시 킬러(?t=타임스탬프)를 추가하여 새로고침 시 깃허브 및 브라우저 API 캐싱을 강제 무력화(실시간 갱신)
+                const apiURL = `https://api.github.com/repos/${githubUser}/${githubRepo}/contents/assets?t=${Date.now()}`;
                 const response = await fetch(apiURL);
                 if (!response.ok) {
                     throw new Error('GitHub API 응답 실패');
