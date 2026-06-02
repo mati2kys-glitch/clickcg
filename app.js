@@ -272,10 +272,15 @@ document.addEventListener('DOMContentLoaded', () => {
         // 1. 도메인에서 GitHub 사용자 및 레포 자동 감지
         if (window.location.hostname.includes("github.io")) {
             githubUser = window.location.hostname.split('.')[0];
-            // pathname에서 레포지토리 이름 추출 (예: /portfolio-repo/index.html -> portfolio-repo)
-            const pathSegments = window.location.pathname.split('/').filter(s => s);
+            // pathname에서 레포지토리 이름 추출 (확장자가 있는 파일명 등은 제외)
+            const pathSegments = window.location.pathname.split('/').filter(s => {
+                return s && !s.includes('.') && s.toLowerCase() !== 'index.html';
+            });
             if (pathSegments.length > 0) {
                 githubRepo = pathSegments[0];
+            } else {
+                // 경로 세그먼트가 비어있다면, 깃허브 User Page 레포(예: username.github.io)로 설정
+                githubRepo = `${githubUser}.github.io`;
             }
         }
         
@@ -294,8 +299,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const slideList = [];
                 let pId = 1;
                 
-                // 파일 이름 기준으로 정렬 (순서 일관성 보장)
-                files.sort((a, b) => a.name.localeCompare(b.name));
+                // 파일 이름 기준으로 정렬 (숫자가 있을 때 자연 정렬: slide__2, slide__10 순서 보장)
+                files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
                 
                 files.forEach(file => {
                     const fileName = file.name;
@@ -314,14 +319,21 @@ document.addEventListener('DOMContentLoaded', () => {
                             const parts = cleanName.split('__');
                             
                             if (parts.length >= 3) {
-                                const category = parts[0];
+                                let category = parts[0].toLowerCase();
                                 const date = parts[1];
-                                const title = parts[2];
+                                // 제목 부분에 혹시나 언더바 2개(__)가 추가로 들어가 있어도 온전하게 합쳐 복원
+                                const title = parts.slice(2).join('__');
+                                
+                                // 카테고리 유효성 검사 (오타 방지 fallback)
+                                const validCategories = ['birds-eye', 'perspective', 'interior', 'simulation'];
+                                if (!validCategories.includes(category)) {
+                                    category = 'interior'; // 유효하지 않은 카테고리는 기본값 'interior'로 보정
+                                }
                                 
                                 projectList.push({
                                     id: pId++,
                                     title: title,
-                                    category: category, // birds-eye, perspective, interior, simulation
+                                    category: category, 
                                     imgUrl: `assets/${fileName}`,
                                     software: "",
                                     scope: "",
