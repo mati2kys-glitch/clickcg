@@ -212,10 +212,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let cachedSlides = [];
     
     const SEED_SLIDES = [
-        "assets/birds_eye_view.png",
-        "assets/perspective_view.png",
-        "assets/architectural_cg.png",
-        "assets/simulation.png"
+        "https://raw.githubusercontent.com/mati2kys-glitch/clickcg/main/assets/birds_eye_view.png",
+        "https://raw.githubusercontent.com/mati2kys-glitch/clickcg/main/assets/perspective_view.png",
+        "https://raw.githubusercontent.com/mati2kys-glitch/clickcg/main/assets/architectural_cg.png",
+        "https://raw.githubusercontent.com/mati2kys-glitch/clickcg/main/assets/simulation.png"
     ];
 
     const SEED_PROJECTS = [
@@ -223,7 +223,7 @@ document.addEventListener('DOMContentLoaded', () => {
             id: 1,
             title: "송도 테크노파크 랜드마크 타워",
             category: "birds-eye",
-            imgUrl: "assets/birds_eye_view.png",
+            imgUrl: "https://raw.githubusercontent.com/mati2kys-glitch/clickcg/main/assets/birds_eye_view.png",
             software: "3ds Max, Corona Renderer, Photoshop",
             scope: "대지 모델링, 건축 매스 모델링, 조명 세팅, 포스트 프로덕션 리터칭",
             date: "2026년 04월",
@@ -234,7 +234,7 @@ document.addEventListener('DOMContentLoaded', () => {
             id: 2,
             title: "한남 테라스 레지던스",
             category: "perspective",
-            imgUrl: "assets/perspective_view.png",
+            imgUrl: "https://raw.githubusercontent.com/mati2kys-glitch/clickcg/main/assets/perspective_view.png",
             software: "3ds Max, V-Ray, Photoshop",
             scope: "익스테리어 및 인테리어 모델링, 정밀 마감재 매핑, 가구 및 소품 세팅, 환경 라이팅",
             date: "2026년 03월",
@@ -245,7 +245,7 @@ document.addEventListener('DOMContentLoaded', () => {
             id: 3,
             title: "동탄 숲속 현대미술관 신축 공사",
             category: "interior",
-            imgUrl: "assets/architectural_cg.png",
+            imgUrl: "https://raw.githubusercontent.com/mati2kys-glitch/clickcg/main/assets/architectural_cg.png",
             software: "Rhino, 3ds Max, Corona Renderer",
             scope: "비정형 건축 외피 모델링, 정밀 유리 질감 표현, 조경 레이아웃 및 렌더링",
             date: "2025년 12월",
@@ -255,8 +255,8 @@ document.addEventListener('DOMContentLoaded', () => {
         {
             id: 4,
             title: "부산 해운대 스마트 크루즈 터미널",
-            category: "simulation",
-            imgUrl: "assets/simulation.png",
+            category: "etc",
+            imgUrl: "https://raw.githubusercontent.com/mati2kys-glitch/clickcg/main/assets/simulation.png",
             software: "Unreal Engine 5, 3ds Max, After Effects",
             scope: "언리얼 엔진 5 라이브 시뮬레이션, 대규모 파티클 물 시뮬레이션, 카메라 워크 연출",
             date: "2025년 10월",
@@ -319,9 +319,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     const hasImageExt = imageExtensions.some(ext => lowerName.endsWith(ext));
                     
                     if (file.type === 'file' && hasImageExt) {
+                        // GitHub의 원격 원본 이미지 주소(download_url)를 사용하되, 캐시 방지 타임스탬프 결합
+                        const rawImgUrl = file.download_url ? `${file.download_url}?t=${Date.now()}` : `assets/${fileName}`;
+                        
                         // 메인 슬라이더 이미지인 경우: slide__[순서]__[슬라이드제목]
                         if (lowerName.startsWith('slide__')) {
-                            slideList.push(`assets/${fileName}`);
+                            slideList.push(rawImgUrl);
                         } 
                         // 일반 프로젝트 이미지인 경우: [카테고리]__[제작연월]__[프로젝트명]
                         else if (fileName.includes('__')) {
@@ -336,7 +339,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 const title = parts.slice(2).join('__');
                                 
                                 // 카테고리 유효성 검사 (오타 방지 fallback)
-                                const validCategories = ['birds-eye', 'perspective', 'interior', 'simulation'];
+                                const validCategories = ['birds-eye', 'perspective', 'interior', 'etc'];
                                 if (!validCategories.includes(category)) {
                                     category = 'interior'; // 유효하지 않은 카테고리는 기본값 'interior'로 보정
                                 }
@@ -345,7 +348,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                     id: pId++,
                                     title: title,
                                     category: category, 
-                                    imgUrl: `assets/${fileName}`,
+                                    imgUrl: rawImgUrl,
                                     software: "",
                                     scope: "",
                                     date: date,
@@ -544,7 +547,67 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     
-    // --- 12. Initialize Core Render Engine (Async Load) ---
+    // --- 12. Image Protection Logic ---
+    function initImageProtection() {
+        let toast = document.querySelector('.toast-notification');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.className = 'toast-notification';
+            toast.innerHTML = `
+                <span class="toast-icon">⚠️</span>
+                <span class="toast-message">저작권 보호를 위해 우클릭 및 이미지 드래그가 제한됩니다.</span>
+            `;
+            document.body.appendChild(toast);
+        }
+
+        let toastTimeout;
+        function showToast(message) {
+            const messageEl = toast.querySelector('.toast-message');
+            if (messageEl && message) {
+                messageEl.textContent = message;
+            }
+            toast.classList.add('active');
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                toast.classList.remove('active');
+            }, 2500);
+        }
+
+        // 1. Right-click Block (contextmenu)
+        document.addEventListener('contextmenu', (e) => {
+            const isFormElement = e.target.closest('input, textarea, select, button');
+            if (!isFormElement) {
+                e.preventDefault();
+                showToast('콘텐츠 보호를 위해 마우스 우클릭이 제한되어 있습니다.');
+            }
+        });
+
+        // 2. Image Drag Block (dragstart)
+        document.addEventListener('dragstart', (e) => {
+            if (e.target.tagName === 'IMG') {
+                e.preventDefault();
+                showToast('콘텐츠 보호를 위해 이미지 드래그가 제한되어 있습니다.');
+            }
+        });
+
+        // 3. Inspect / View Source / Save Hotkeys Block (keydown)
+        document.addEventListener('keydown', (e) => {
+            const isF12 = e.key === 'F12' || e.keyCode === 123;
+            const isCtrlShiftI = e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.keyCode === 73);
+            const isCtrlShiftC = e.ctrlKey && e.shiftKey && (e.key === 'C' || e.key === 'c' || e.keyCode === 67);
+            const isCtrlU = e.ctrlKey && (e.key === 'U' || e.key === 'u' || e.keyCode === 85);
+            const isCtrlS = e.ctrlKey && (e.key === 'S' || e.key === 's' || e.keyCode === 83);
+
+            if (isF12 || isCtrlShiftI || isCtrlShiftC || isCtrlU || isCtrlS) {
+                e.preventDefault();
+                showToast('콘텐츠 보호를 위해 해당 단축키 사용이 제한되어 있습니다.');
+            }
+        });
+    }
+
+    // --- 13. Initialize Core Render Engine (Async Load) & Image Protection ---
+    initImageProtection();
+    
     loadStaticDatabase().then(() => {
         renderPortfolio();
         renderHeroSlider();

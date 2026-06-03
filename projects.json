@@ -42,7 +42,7 @@
     {
       "id": 4,
       "title": "부산 해운대 스마트 크루즈 터미널",
-      "category": "simulation",
+      "category": "etc",
       "imgUrl": "assets/simulation.png",
       "software": "Unreal Engine 5, 3ds Max, After Effects",
       "scope": "언리얼 엔진 5 라이브 시뮬레이션, 대규모 파티클 물 시뮬레이션, 카메라 워크 연출",
