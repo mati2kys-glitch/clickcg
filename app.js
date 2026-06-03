@@ -334,6 +334,13 @@ document.addEventListener('DOMContentLoaded', () => {
                             
                             if (parts.length >= 3) {
                                 let category = parts[0].toLowerCase();
+                                // Normalize category aliases to prevent validation/fallback issues
+                                if (category === 'simulation') {
+                                    category = 'etc';
+                                } else if (category === 'birds_eye' || category === 'birdseye' || category === 'bird-eye') {
+                                    category = 'birds-eye';
+                                }
+                                
                                 const date = parts[1];
                                 // 제목 부분에 혹시나 언더바 2개(__)가 추가로 들어가 있어도 온전하게 합쳐 복원
                                 const title = parts.slice(2).join('__');
