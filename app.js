@@ -408,8 +408,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Helper to parse date strings (e.g., "2026년 04월", "202605", "2026년 4월") into numeric values for sorting
+    function parseDateToValue(dateStr) {
+        if (!dateStr) return 0;
+        // Match 4 digits for year, and optional 1 or 2 digits for month
+        const match = dateStr.match(/(\d{4})[^\d]*(\d{1,2})?/);
+        if (match) {
+            const year = parseInt(match[1], 10);
+            const month = match[2] ? parseInt(match[2], 10) : 0;
+            return year * 12 + month;
+        }
+        const numbers = dateStr.replace(/[^0-9]/g, '');
+        if (numbers.length >= 6) {
+            const year = parseInt(numbers.substring(0, 4), 10);
+            const month = parseInt(numbers.substring(4, 6), 10);
+            return year * 12 + month;
+        }
+        return 0;
+    }
+
     function getProjectsFromDB() {
-        return cachedProjects;
+        // Return projects sorted by date descending (most recent first)
+        return [...cachedProjects].sort((a, b) => parseDateToValue(b.date) - parseDateToValue(a.date));
     }
 
     function getSlidesFromDB() {
